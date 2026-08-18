@@ -131,3 +131,87 @@ export function genererDatesRecurrentes(dateDebutISO, dateFinISO, joursSemaine) 
   }
   return dates
 }
+
+function normaliserDateImport(str) {
+  if (!str) return null
+  const s = str.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (m) {
+    const [, j, mo, a] = m
+    return `${a}-${mo.padStart(2, '0')}-${j.padStart(2, '0')}`
+  }
+  return null
+}
+
+// Analyse un texte collé et en extrait une liste de performances.
+// Accepte deux formats, mélangeables dans le même texte :
+//  1) Bloc "Clé : Valeur" (celui utilisé dans les fichiers d'import fournis) :
+//       Bassin   : 25
+//       Nage     : NL
+//       Distance : 100
+//       Temps    : 01:41.74
+//       Lieu     : Ayse (Bonneville)
+//       Date     : 2026-06-20
+//       Points   : 98
+//  2) Ligne unique séparée par des points-virgules :
+//       25;NL;100;01:41.74;Ayse (Bonneville);2026-06-20;98
+// Les lignes de titre, séparateurs "====" ou "Ligne N" sont ignorées automatiquement.
+export function parserPerformancesTexte(texte) {
+  const NAGES_VALIDES = ['NL', 'DOS', 'BR', 'PAP', '3N', '4N']
+  const lignes = (texte || '').split('\n')
+  const bruts = []
+  let courant = null
+
+  function flush() {
+    if (courant && Object.keys(courant).length > 0) bruts.push(courant)
+    courant = null
+  }
+
+  for (const ligneBrute of lignes) {
+    const ligne = ligneBrute.trim()
+    if (!ligne) continue
+
+    if (ligne.includes(';') && !ligne.includes(':')) {
+      flush()
+      const parts = ligne.split(';').map((p) => p.trim())
+      bruts.push({
+        bassin: parts[0] || '',
+        nage: parts[1] || '',
+        distance: parts[2] || '',
+        temps: parts[3] || '',
+        lieu: parts[4] || '',
+        date: parts[5] || '',
+        points: parts[6] || '',
+      })
+      continue
+    }
+
+    const match = ligne.match(/^([A-Za-zÀ-ÿ0-9]+)\s*:\s*(.*)$/)
+    if (!match) continue
+    const cle = match[1].toLowerCase()
+    const valeur = match[2].trim()
+
+    if (cle === 'bassin') flush()
+    if (!courant) courant = {}
+    courant[cle] = valeur
+  }
+  flush()
+
+  return bruts.map((r) => {
+    const bassin = parseInt(r.bassin, 10)
+    const nage = (r.nage || '').toUpperCase().trim()
+    const distance = r.distance ? parseInt(r.distance, 10) : null
+    const temps = (r.temps || '').trim()
+    const lieu = (r.lieu || '').trim() || null
+    const date = normaliserDateImport(r.date)
+    const points = r.points ? parseInt(r.points, 10) : null
+
+    const erreurs = []
+    if (bassin !== 25 && bassin !== 50) erreurs.push('bassin invalide (doit être 25 ou 50)')
+    if (!NAGES_VALIDES.includes(nage)) erreurs.push('nage invalide (NL, DOS, BR, PAP, 3N ou 4N)')
+    if (!temps) erreurs.push('temps manquant')
+
+    return { bassin, nage, distance, temps, lieu, date, points, valide: erreurs.length === 0, erreurs }
+  })
+}
